@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WebRTC P2P Video Call</title>
+
+    <style>
+        body {
+            font-family: sans-serif;
+            max-width: 1000px;
+            margin: 30px auto;
+            padding: 20px;
+        }
+
+        .videos {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+
+        video {
+            width: 100%;
+            background: #111;
+            border-radius: 8px;
+            min-height: 240px;
+        }
+
+        .guide-box {
+            background: #eef6ff;
+            border-left: 4px solid #1a73e8;
+            padding: 12px 16px;
+            margin-bottom: 20px;
+            border-radius: 4px;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+
+        .guide-box ol {
+            margin: 6px 0 0 18px;
+            padding: 0;
+        }
+
+        textarea {
+            width: 100%;
+            min-height: 180px;
+            margin-top: 10px;
+            font-family: monospace;
+        }
+
+        button {
+            margin: 5px;
+            padding: 10px 15px;
+            cursor: pointer;
+        }
+
+        .status {
+            margin: 15px 0;
+            padding: 10px;
+            background: #eee;
+            border-radius: 6px;
+        }
+    </style>
+</head>
+
+<body>
+
+    <h1>WebRTC P2P Video Call (2 chiều)</h1>
+
+    <div class="guide-box">
+        <strong>📌 Hướng dẫn gọi video 2 chiều:</strong>
+        <ol>
+            <li><strong>Bên A (Tạo cuộc gọi):</strong> Bấm <em>"Camera + Mic"</em> (hoặc Share Screen) &rarr; Bấm <em>"Create Offer"</em> &rarr; Copy <em>Local SDP</em> gửi cho Bên B.</li>
+            <li><strong>Bên B (Nhận cuộc gọi):</strong> Dán SDP của Bên A vào <em>Remote SDP</em> &rarr; Bấm <em>"Set Remote SDP"</em> &rarr; Bấm <em>"Camera + Mic"</em> (hoặc Share Screen) &rarr; Bấm <em>"Create Answer"</em> &rarr; Copy <em>Local SDP</em> gửi lại cho Bên A.</li>
+            <li><strong>Bên A:</strong> Dán SDP của Bên B vào <em>Remote SDP</em> &rarr; Bấm <em>"Set Remote SDP"</em>. Kết nối 2 chiều hoàn tất!</li>
+            <li><em>Lưu ý:</em> Cả 2 bên đều có thể bấm <strong>Camera + Mic</strong>, <strong>Share Screen</strong> hoặc <strong>Stop Media</strong> bất kỳ lúc nào (kể cả trước hoặc sau khi kết nối) mà không bị mất kết nối 2 chiều.</li>
+        </ol>
+    </div>
+
+    <div class="videos">
+        <div>
+            <h3>Local (Của bạn)</h3>
+            <video id="localVideo" autoplay muted playsinline></video>
+        </div>
+
+        <div>
+            <h3>Remote (Đối phương)</h3>
+            <video id="remoteVideo" autoplay playsinline muted controls></video>
+        </div>
+    </div>
+
+    <div class="status">
+        Connection:
+        <span id="connectionState">new</span>
+        <br />
+
+        ICE:
+        <span id="iceConnectionState">new</span>
+        <br />
+
+        ICE Gathering:
+        <span id="iceGatheringState">new</span>
+    </div>
+
+    <hr />
+
+    <h2>1. Media</h2>
+
+    <button onclick="startCamera()">
+        Camera + Mic
+    </button>
+
+    <button onclick="shareScreen()">
+        Share Screen
+    </button>
+
+    <button onclick="stopMedia()">
+        Stop Media
+    </button>
+
+    <hr />
+
+    <h2>2. Signaling</h2>
+
+    <button onclick="createOffer()">
+        Create Offer
+    </button>
+
+    <button onclick="createAnswer()">
+        Create Answer
+    </button>
+
+    <br />
+
+    <label>Local SDP</label>
+    <textarea id="localSdp"></textarea>
+
+    <br />
+
+    <label>Remote SDP</label>
+    <textarea id="remoteSdp"></textarea>
+
+    <br />
+
+    <button onclick="setRemoteSdp()">
+        Set Remote SDP
+    </button>
+
+    <script>
+        const localVideo = document.getElementById("localVideo");
+        const remoteVideo = document.getElementById("remoteVideo");
+
+        const localSdp = document.getElementById("localSdp");
+        const remoteSdp = document.getElementById("remoteSdp");
+
+        const connectionState = document.getElementById("connectionState");
+        const iceConnectionState = document.getElementById("iceConnectionState");
+        const iceGatheringState = document.getElementById("iceGatheringState");
+
+        const pc = new RTCPeerConnection({
+            iceServers: [
+                { urls: "stun:stun.l.google.com:19302" },
+                { urls: "stun:stun1.l.google.com:19302" }
+            ]
+        });
+
+        let localStream = null;
+
+        /*
+         * ==========================================
+         * 1. TẠO MEDIA SECTIONS NGAY TỪ ĐẦU (2 CHIỀU)
+         * ==========================================
+         */
+
+        const videoTransceiver = pc.addTransceiver("video", {
+            direction: "sendrecv"
+        });
+
+        const audioTransceiver = pc.addTransceiver("audio", {
+            direction: "sendrecv"
+        });
+
+
+        /*
+         * ==========================================
+         * 2. NHẬN MEDIA TỪ REMOTE
+         * ==========================================
+         */
+
+        const remoteStream = new MediaStream();
+        remoteVideo.srcObject = remoteStream;
+
+        pc.ontrack = (event) => {
+            console.log("🔥 REMOTE TRACK:", {
+                kind: event.track.kind,
+                readyState: event.track.readyState,
+                muted: event.track.muted,
+                streams: event.streams.length,
+            });
+
+            if (!remoteStream.getTracks().some(t => t.id === event.track.id)) {
+                remoteStream.addTrack(event.track);
+            }
+
+            event.track.onunmute = () => {
+                console.log("🔥 REMOTE TRACK UNMUTED:", event.track.kind);
+                remoteVideo.play().catch(err => {
+                    console.warn("Autoplay notice (onunmute):", err.message);
+                });
+            };
+
+            event.track.onmute = () => {
+                console.log("🔥 REMOTE TRACK MUTED:", event.track.kind);
+            };
+
+            remoteVideo.play().catch(err => {
+                console.warn("Autoplay notice (ontrack):", err.message);
+            });
+        };
+
+
+        /*
+         * ==========================================
+         * 3. STATE
+         * ==========================================
+         */
+
+        pc.onconnectionstatechange = () => {
+            connectionState.textContent = pc.connectionState;
+
+            console.log(
+                "Connection state:",
+                pc.connectionState
+            );
+        };
+
+        pc.oniceconnectionstatechange = () => {
+            iceConnectionState.textContent =
+                pc.iceConnectionState;
+
+            console.log(
+                "ICE connection state:",
+                pc.iceConnectionState
+            );
+        };
+
+        pc.onicegatheringstatechange = () => {
+            iceGatheringState.textContent =
+                pc.iceGatheringState;
+
+            console.log(
+                "ICE gathering state:",
+                pc.iceGatheringState
+            );
+        };
+
+
+        /*
+         * ==========================================
+         * 4. CAMERA + MIC
+         * ==========================================
+         */
+
+        async function startCamera() {
+            const stream =
+                await navigator.mediaDevices.getUserMedia({
+                    video: true,
+                    audio: true
+                });
+
+            await setLocalMedia(stream);
+        }
+
+
+        /*
+         * ==========================================
+         * 5. SCREEN SHARE
+         * ==========================================
+         */
+
+        async function shareScreen() {
+            const stream =
+                await navigator.mediaDevices.getDisplayMedia({
+                    video: true,
+                    audio: true
+                });
+
+            await setLocalMedia(stream);
+        }
+
+
+        /*
+         * ==========================================
+         * 6. GẮN MEDIA VÀO TRANSCEIVER
+         * ==========================================
+         */
+
+        async function setLocalMedia(stream) {
+            // Dừng tracks cũ trước khi đổi luồng mới (ví dụ từ camera sang share screen)
+            if (localStream && localStream !== stream) {
+                localStream.getTracks().forEach(track => track.stop());
+            }
+
+            localStream = stream;
+            localVideo.srcObject = stream;
+
+            const videoTrack = stream.getVideoTracks()[0] ?? null;
+            const audioTrack = stream.getAudioTracks()[0] ?? null;
+
+            if (videoTrack) {
+                await videoTransceiver.sender.replaceTrack(videoTrack);
+                videoTransceiver.sender.setStreams(stream);
+
+                // Khi chia sẻ màn hình và người dùng bấm nút native "Dừng chia sẻ" trên trình duyệt
+                videoTrack.onended = () => {
+                    console.log("Video track ended");
+                    stopMedia();
+                };
+            } else {
+                await videoTransceiver.sender.replaceTrack(null);
+            }
+
+            if (audioTrack) {
+                await audioTransceiver.sender.replaceTrack(audioTrack);
+                audioTransceiver.sender.setStreams(stream);
+            } else {
+                await audioTransceiver.sender.replaceTrack(null);
+            }
+
+            // Luôn duy trì hướng 2 chiều (sendrecv) để cả 2 bên tự do gửi/nhận bất kỳ lúc nào
+            videoTransceiver.direction = "sendrecv";
+            audioTransceiver.direction = "sendrecv";
+
+            console.log("LOCAL VIDEO:", videoTransceiver.sender.track);
+            console.log("LOCAL AUDIO:", audioTransceiver.sender.track);
+            console.log("VIDEO DIRECTION:", videoTransceiver.direction);
+            console.log("AUDIO DIRECTION:", audioTransceiver.direction);
+            console.log("Local media set");
+        }
+
+
+        /*
+         * ==========================================
+         * 7. STOP MEDIA
+         * ==========================================
+         */
+
+        function stopMedia() {
+            if (!localStream) return;
+
+            localStream.getTracks().forEach(track => {
+                track.stop();
+            });
+
+            localStream = null;
+            localVideo.srcObject = null;
+
+            // Gỡ track khỏi sender nhưng KHÔNG hạ cấp transceiver xuống recvonly
+            // để khi bấm lại Camera/Share Screen thì media tiếp tục truyền ngay
+            videoTransceiver.sender.replaceTrack(null);
+            audioTransceiver.sender.replaceTrack(null);
+
+            console.log("Media stopped");
+        }
+
+
+        /*
+         * ==========================================
+         * 8. CREATE OFFER
+         * ==========================================
+         */
+
+        async function createOffer() {
+            videoTransceiver.direction = "sendrecv";
+            audioTransceiver.direction = "sendrecv";
+
+            const offer = await pc.createOffer();
+
+            await pc.setLocalDescription(offer);
+
+            await waitForIceGatheringComplete();
+
+            localSdp.value = JSON.stringify(
+                pc.localDescription,
+                null,
+                2
+            );
+
+            console.log("Offer created");
+        }
+
+
+        /*
+         * ==========================================
+         * 9. CREATE ANSWER
+         * ==========================================
+         */
+
+        async function createAnswer() {
+
+            if (pc.signalingState !== "have-remote-offer") {
+                console.error(
+                    "Cannot create answer. Current signaling state:",
+                    pc.signalingState
+                );
+                return;
+            }
+
+            // Ensure we have a local stream before answering. If the user hasn't
+            // started camera/screen yet, automatically request a camera+mic stream.
+            if (!localStream) {
+                console.log("No local media yet – requesting camera+mic before answering.");
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                    await setLocalMedia(stream);
+                } catch (e) {
+                    console.warn("Failed to acquire local media before answer:", e);
+                }
+            }
+
+            // Ensure both transceivers stay bidirectional regardless of whether a local track exists yet.
+            videoTransceiver.direction = "sendrecv";
+            audioTransceiver.direction = "sendrecv";
+
+            console.log("ANSWER TRANSCEIVERS:",
+                pc.getTransceivers().map(t => ({
+                    kind: t.receiver.track.kind,
+                    direction: t.direction,
+                    currentDirection: t.currentDirection,
+                    senderTrack: t.sender.track?.label ?? null,
+                }))
+            );
+
+            const answer = await pc.createAnswer();
+
+            await pc.setLocalDescription(answer);
+
+            await waitForIceGatheringComplete();
+
+            localSdp.value = JSON.stringify(
+                pc.localDescription,
+                null,
+                2
+            );
+
+            console.log("Answer created");
+            console.log("LOCAL ANSWER SDP:", pc.localDescription.sdp);
+            console.log("POST-ANSWER TRANSCEIVERS:",
+                pc.getTransceivers().map(t => ({
+                    kind: t.receiver.track.kind,
+                    direction: t.direction,
+                    currentDirection: t.currentDirection,
+                    senderTrack: t.sender.track?.label ?? null,
+                }))
+            );
+        }
+
+
+        /*
+         * ==========================================
+         * 10. SET REMOTE SDP
+         * ==========================================
+         */
+
+        async function setRemoteSdp() {
+
+            const description = JSON.parse(
+                remoteSdp.value
+            );
+
+            await pc.setRemoteDescription(description);
+
+            console.log(
+                "Remote SDP set:",
+                description.type
+            );
+
+            console.log(
+                "Signaling state:",
+                pc.signalingState
+            );
+        }
+
+
+        /*
+         * ==========================================
+         * 11. WAIT ICE
+         * ==========================================
+         */
+
+        function waitForIceGatheringComplete() {
+
+            return new Promise(resolve => {
+
+                if (
+                    pc.iceGatheringState === "complete"
+                ) {
+                    resolve();
+                    return;
+                }
+
+                const checkState = () => {
+
+                    if (
+                        pc.iceGatheringState === "complete"
+                    ) {
+                        pc.removeEventListener(
+                            "icegatheringstatechange",
+                            checkState
+                        );
+
+                        resolve();
+                    }
+                };
+
+                pc.addEventListener(
+                    "icegatheringstatechange",
+                    checkState
+                );
+            });
+        }
+
+    </script>
+
+</body>
+
+</html>
