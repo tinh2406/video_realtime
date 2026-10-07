@@ -68,15 +68,6 @@
 
     <h1>WebRTC P2P Video Call (2 chiều)</h1>
 
-    <div class="guide-box">
-        <strong>📌 Hướng dẫn gọi video 2 chiều:</strong>
-        <ol>
-            <li><strong>Bên A (Tạo cuộc gọi):</strong> Bấm <em>"Camera + Mic"</em> (hoặc Share Screen) &rarr; Bấm <em>"Create Offer"</em> &rarr; Copy <em>Local SDP</em> gửi cho Bên B.</li>
-            <li><strong>Bên B (Nhận cuộc gọi):</strong> Dán SDP của Bên A vào <em>Remote SDP</em> &rarr; Bấm <em>"Set Remote SDP"</em> &rarr; Bấm <em>"Camera + Mic"</em> (hoặc Share Screen) &rarr; Bấm <em>"Create Answer"</em> &rarr; Copy <em>Local SDP</em> gửi lại cho Bên A.</li>
-            <li><strong>Bên A:</strong> Dán SDP của Bên B vào <em>Remote SDP</em> &rarr; Bấm <em>"Set Remote SDP"</em>. Kết nối 2 chiều hoàn tất!</li>
-            <li><em>Lưu ý:</em> Cả 2 bên đều có thể bấm <strong>Camera + Mic</strong>, <strong>Share Screen</strong> hoặc <strong>Stop Media</strong> bất kỳ lúc nào (kể cả trước hoặc sau khi kết nối) mà không bị mất kết nối 2 chiều.</li>
-        </ol>
-    </div>
 
     <div class="videos">
         <div>
@@ -86,7 +77,7 @@
 
         <div>
             <h3>Remote (Đối phương)</h3>
-            <video id="remoteVideo" autoplay playsinline muted controls></video>
+            <video id="remoteVideo" autoplay playsinline muted></video>
         </div>
     </div>
 
@@ -173,13 +164,16 @@
          * ==========================================
          */
 
-        const videoTransceiver = pc.addTransceiver("video", {
-            direction: "sendrecv"
-        });
+        function getTransceiver(kind) {
+            // Tìm transceiver có sẵn (do Set Remote SDP tạo ra)
+            let transceiver = pc.getTransceivers().find(t => t.receiver.track.kind === kind);
 
-        const audioTransceiver = pc.addTransceiver("audio", {
-            direction: "sendrecv"
-        });
+            // Nếu chưa có (mình là người gọi - Máy A), thì tạo mới
+            if (!transceiver) {
+                transceiver = pc.addTransceiver(kind, { direction: "sendrecv" });
+            }
+            return transceiver;
+        }
 
 
         /*
@@ -308,37 +302,26 @@
             const videoTrack = stream.getVideoTracks()[0] ?? null;
             const audioTrack = stream.getAudioTracks()[0] ?? null;
 
-            if (videoTrack) {
-                await videoTransceiver.sender.replaceTrack(videoTrack);
-                videoTransceiver.sender.setStreams(stream);
+            // LẤY TRANSCEIVER ĐÚNG CHUẨN
+            const vt = getTransceiver("video");
+            const at = getTransceiver("audio");
 
-                // Khi chia sẻ màn hình và người dùng bấm nút native "Dừng chia sẻ" trên trình duyệt
-                videoTrack.onended = () => {
-                    console.log("Video track ended");
-                    stopMedia();
-                };
+            if (videoTrack) {
+                await vt.sender.replaceTrack(videoTrack);
+                videoTrack.onended = () => stopMedia();
             } else {
-                await videoTransceiver.sender.replaceTrack(null);
+                await vt.sender.replaceTrack(null);
             }
 
             if (audioTrack) {
-                await audioTransceiver.sender.replaceTrack(audioTrack);
-                audioTransceiver.sender.setStreams(stream);
+                await at.sender.replaceTrack(audioTrack);
             } else {
-                await audioTransceiver.sender.replaceTrack(null);
+                await at.sender.replaceTrack(null);
             }
 
-            // Luôn duy trì hướng 2 chiều (sendrecv) để cả 2 bên tự do gửi/nhận bất kỳ lúc nào
-            videoTransceiver.direction = "sendrecv";
-            audioTransceiver.direction = "sendrecv";
-
-            console.log("LOCAL VIDEO:", videoTransceiver.sender.track);
-            console.log("LOCAL AUDIO:", audioTransceiver.sender.track);
-            console.log("VIDEO DIRECTION:", videoTransceiver.direction);
-            console.log("AUDIO DIRECTION:", audioTransceiver.direction);
-            console.log("Local media set");
+            vt.direction = "sendrecv";
+            at.direction = "sendrecv";
         }
-
 
         /*
          * ==========================================
@@ -349,19 +332,12 @@
         function stopMedia() {
             if (!localStream) return;
 
-            localStream.getTracks().forEach(track => {
-                track.stop();
-            });
-
+            localStream.getTracks().forEach(track => track.stop());
             localStream = null;
             localVideo.srcObject = null;
 
-            // Gỡ track khỏi sender nhưng KHÔNG hạ cấp transceiver xuống recvonly
-            // để khi bấm lại Camera/Share Screen thì media tiếp tục truyền ngay
-            videoTransceiver.sender.replaceTrack(null);
-            audioTransceiver.sender.replaceTrack(null);
-
-            console.log("Media stopped");
+            getTransceiver("video").sender.replaceTrack(null);
+            getTransceiver("audio").sender.replaceTrack(null);
         }
 
 
@@ -372,22 +348,13 @@
          */
 
         async function createOffer() {
-            videoTransceiver.direction = "sendrecv";
-            audioTransceiver.direction = "sendrecv";
+            getTransceiver("video").direction = "sendrecv";
+            getTransceiver("audio").direction = "sendrecv";
 
             const offer = await pc.createOffer();
-
             await pc.setLocalDescription(offer);
-
             await waitForIceGatheringComplete();
-
-            localSdp.value = JSON.stringify(
-                pc.localDescription,
-                null,
-                2
-            );
-
-            console.log("Offer created");
+            localSdp.value = JSON.stringify(pc.localDescription, null, 2);
         }
 
 
@@ -399,50 +366,22 @@
 
         async function createAnswer() {
 
-            if (pc.signalingState !== "have-remote-offer") {
-                console.error(
-                    "Cannot create answer. Current signaling state:",
-                    pc.signalingState
-                );
-                return;
-            }
+            if (pc.signalingState !== "have-remote-offer") return;
 
-            // Ensure we have a local stream before answering. If the user hasn't
-            // started camera/screen yet, automatically request a camera+mic stream.
             if (!localStream) {
-                console.log("No local media yet – requesting camera+mic before answering.");
                 try {
                     const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
                     await setLocalMedia(stream);
-                } catch (e) {
-                    console.warn("Failed to acquire local media before answer:", e);
-                }
+                } catch (e) { }
             }
 
-            // Ensure both transceivers stay bidirectional regardless of whether a local track exists yet.
-            videoTransceiver.direction = "sendrecv";
-            audioTransceiver.direction = "sendrecv";
-
-            console.log("ANSWER TRANSCEIVERS:",
-                pc.getTransceivers().map(t => ({
-                    kind: t.receiver.track.kind,
-                    direction: t.direction,
-                    currentDirection: t.currentDirection,
-                    senderTrack: t.sender.track?.label ?? null,
-                }))
-            );
+            getTransceiver("video").direction = "sendrecv";
+            getTransceiver("audio").direction = "sendrecv";
 
             const answer = await pc.createAnswer();
-
             await pc.setLocalDescription(answer);
-
             await waitForIceGatheringComplete();
-
-            localSdp.value = JSON.stringify(
-                pc.localDescription,
-                null,
-                2
-            );
+            localSdp.value = JSON.stringify(pc.localDescription, null, 2);
 
             console.log("Answer created");
             console.log("LOCAL ANSWER SDP:", pc.localDescription.sdp);
