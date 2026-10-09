@@ -19,5 +19,10 @@
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "typescript": "~5.7.2"
-  }
+  },
+  "description": "Ứng dụng web gọi video 1:1, gọi nhóm nhỏ và livestream nhóm nhỏ. Frontend dùng React, TypeScript, Vite; server Actix Web cung cấp WebSocket signaling cho WebRTC.",
+  "main": "index.js",
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
 }

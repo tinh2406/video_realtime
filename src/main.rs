@@ -1,6 +1,6 @@
 use actix_files::{Files, NamedFile};
 use actix_web::{get, web, App, HttpRequest, HttpResponse, HttpServer, Result};
-use actix_ws::{CloseCode, CloseReason, Message, Session};
+use actix_ws::{CloseCode, CloseReason, Message};
 use futures_util::StreamExt;
 use serde_json::{json, Value};
 use std::collections::HashMap;

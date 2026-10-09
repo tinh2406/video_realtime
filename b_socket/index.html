@@ -1,0 +1,656 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Socket.io Chat & WebRTC Demo</title>
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, Helvetica, sans-serif;
+            margin: 0;
+            display: flex;
+            height: 100vh;
+        }
+
+        #sidebar {
+            width: 250px;
+            background: #f4f4f4;
+            border-right: 1px solid #ddd;
+            padding: 10px;
+            box-sizing: border-box;
+        }
+
+        #main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            min-width: 0;
+        }
+
+        #login,
+        #chat,
+        #call {
+            margin-bottom: 12px;
+        }
+
+        #userList {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        #userList li {
+            padding: 6px;
+            cursor: pointer;
+            border-bottom: 1px solid #e0e0e0;
+        }
+
+        #userList li.active {
+            background: #cce5ff;
+        }
+
+        #messages {
+            flex: 1;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            padding: 6px;
+            background: #fff;
+        }
+
+        #messages div {
+            margin: 4px 0;
+        }
+
+        #messages .from {
+            color: #555;
+        }
+
+        #messages .own {
+            font-weight: bold;
+            color: #0066cc;
+        }
+
+        button {
+            padding: 6px 12px;
+            cursor: pointer;
+        }
+
+        input {
+            padding: 6px;
+            box-sizing: border-box;
+        }
+
+        #usernameInput {
+            width: 100%;
+        }
+
+        #msgInput {
+            flex: 1;
+            min-width: 0;
+        }
+
+        #videoArea {
+            position: relative;
+            flex: 1;
+            min-height: 260px;
+            width: 100%;
+            box-sizing: border-box;
+            overflow: hidden;
+        }
+
+        #remoteVideo {
+            display: block;
+            width: 100%;
+            height: 100%;
+            min-height: 260px;
+            object-fit: contain;
+            background: #000;
+            border-radius: 8px;
+        }
+
+        #localVideo {
+            position: absolute;
+            right: 18px;
+            bottom: 18px;
+            width: clamp(110px, 20%, 220px);
+            max-height: 28%;
+            aspect-ratio: 4 / 3;
+            object-fit: cover;
+            background: #000;
+            border: 2px solid #fff;
+            border-radius: 10px;
+            box-shadow: 0 2px 12px #0008;
+            z-index: 2;
+        }
+
+        @media (max-width: 640px) {
+            body {
+                height: 100dvh;
+            }
+
+            #sidebar {
+                width: 180px;
+            }
+
+            #videoArea,
+            #remoteVideo {
+                min-height: 220px;
+            }
+
+            #localVideo {
+                right: 10px;
+                bottom: 10px;
+                width: 120px;
+                max-height: 25%;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <aside id="sidebar">
+        <div id="login">
+            <h3>Login</h3>
+            <input id="usernameInput" type="text" placeholder="Enter username" autocomplete="nickname">
+            <button id="loginBtn" style="margin-top:4px;">Login</button>
+            <button id="logoutBtn" style="display:none; margin-top:4px;">Logout</button>
+            <div id="loginError" style="color:red; margin-top:4px;"></div>
+        </div>
+
+        <section id="usersSection" style="display:none;">
+            <h3>Online Users</h3>
+            <ul id="userList"></ul>
+        </section>
+
+        <section id="callControls" style="display:none;">
+            <h3>Call</h3>
+            <button id="callBtn" disabled>Start Call</button>
+            <button id="shareScreenBtn" disabled>Share Screen</button>
+            <button id="stopShareBtn" disabled style="display:none;">Stop Sharing</button>
+            <button id="hangupBtn" disabled>Hang Up</button>
+        </section>
+    </aside>
+
+    <main id="main">
+        <section id="chat" style="flex:1; display:flex; flex-direction:column;">
+            <h3 style="margin:0;padding:6px;background:#eee;">Chat</h3>
+            <div id="messages"></div>
+            <div style="display:flex; gap:4px; padding:6px; background:#fafafa;">
+                <input id="msgInput" type="text" placeholder="Type a message" disabled>
+                <button id="sendBtn" disabled>Send</button>
+            </div>
+        </section>
+
+        <section id="videoArea" style="display:none; padding:6px; background:#111;">
+            <video id="remoteVideo" autoplay playsinline></video>
+            <video id="localVideo" autoplay muted playsinline></video>
+        </section>
+    </main>
+
+    <script>
+        const socket = io();
+
+        const $ = (id) => document.getElementById(id);
+        const usernameInput = $('usernameInput');
+        const loginBtn = $('loginBtn');
+        const logoutBtn = $('logoutBtn');
+        const loginError = $('loginError');
+        const userListEl = $('userList');
+        const usersSection = $('usersSection');
+        const callBtn = $('callBtn');
+        const shareScreenBtn = $('shareScreenBtn');
+        const stopShareBtn = $('stopShareBtn');
+        const hangupBtn = $('hangupBtn');
+        const callControls = $('callControls');
+        const msgInput = $('msgInput');
+        const sendBtn = $('sendBtn');
+        const messagesDiv = $('messages');
+        const videoArea = $('videoArea');
+        const localVideo = $('localVideo');
+        const remoteVideo = $('remoteVideo');
+
+        let myUsername = null;
+        let selectedUser = null;
+        let pc = null;
+        let remoteSocketId = null;
+        let cameraStream = null;
+        let screenStream = null;
+        let remoteStream = null;
+        let pendingIceCandidates = [];
+        let callSetupInProgress = false;
+
+        const configuration = {
+            iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+        };
+
+        function addSystemMessage(message) {
+            const div = document.createElement('div');
+            div.textContent = message;
+            div.style.color = '#777';
+            div.style.fontStyle = 'italic';
+            messagesDiv.appendChild(div);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+
+        function addChatMessage(from, message, own = false) {
+            const div = document.createElement('div');
+            const sender = document.createElement('span');
+            sender.className = own ? 'own' : 'from';
+            sender.textContent = `${from}: `;
+            const content = document.createElement('span');
+            content.textContent = message;
+            div.append(sender, content);
+            messagesDiv.appendChild(div);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+
+        function renderUserList(users) {
+            const filtered = [...new Set(users)].filter(username => username !== myUsername);
+            userListEl.innerHTML = '';
+            filtered.forEach(username => {
+                const li = document.createElement('li');
+                li.textContent = username;
+                li.classList.toggle('active', username === selectedUser);
+                li.onclick = () => selectUser(username, li);
+                userListEl.appendChild(li);
+            });
+            if (selectedUser && !filtered.includes(selectedUser)) {
+                selectedUser = null;
+                sendBtn.disabled = true;
+                msgInput.disabled = true;
+                callBtn.disabled = true;
+                addSystemMessage('The selected user is no longer online.');
+            }
+        }
+
+        function selectUser(username, liElement) {
+            selectedUser = username;
+            document.querySelectorAll('#userList li').forEach(li => li.classList.remove('active'));
+            liElement.classList.add('active');
+            sendBtn.disabled = false;
+            msgInput.disabled = false;
+            callBtn.disabled = Boolean(pc || callSetupInProgress);
+            msgInput.focus();
+        }
+
+        socket.on('connect', () => {
+            console.log('Socket.IO connected:', socket.id);
+            loginError.textContent = '';
+        });
+        socket.on('connect_error', error => {
+            console.error('Socket.IO connection error:', error.message);
+            loginError.textContent = 'Cannot connect to server. Check that the server is running.';
+        });
+
+        loginBtn.onclick = () => {
+            const username = usernameInput.value.trim();
+            if (!username) {
+                loginError.textContent = 'Please enter a username.';
+                usernameInput.focus();
+                return;
+            }
+            if (!socket.connected) {
+                loginError.textContent = 'Not connected to server yet.';
+                return;
+            }
+            loginError.textContent = '';
+            loginBtn.disabled = true;
+            socket.emit('login', username);
+        };
+
+        socket.on('login error', message => {
+            loginError.textContent = message;
+            loginBtn.disabled = false;
+        });
+        socket.on('login success', username => {
+            myUsername = username;
+            usernameInput.disabled = true;
+            loginBtn.style.display = 'none';
+            logoutBtn.style.display = 'inline-block';
+            usersSection.style.display = 'block';
+            callControls.style.display = 'block';
+            document.title = `Chat – ${myUsername}`;
+            loginError.textContent = '';
+            addSystemMessage(`Logged in as ${username}`);
+        });
+        socket.on('user list', users => {
+            if (myUsername) {
+                usersSection.style.display = 'block';
+                renderUserList(users);
+            }
+        });
+        socket.on('user connected', username => {
+            if (username !== myUsername) addSystemMessage(`${username} is online`);
+        });
+        socket.on('user disconnected', username => {
+            addSystemMessage(`${username} went offline`);
+            if (pc && remoteSocketId) addSystemMessage('The other user may have disconnected.');
+        });
+
+        logoutBtn.onclick = () => {
+            hangUp(false);
+            socket.emit('logout');
+            resetLoginUI();
+        };
+
+        function resetLoginUI() {
+            myUsername = null;
+            selectedUser = null;
+            closePeerConnection();
+            usernameInput.disabled = false;
+            usernameInput.value = '';
+            loginBtn.disabled = false;
+            loginBtn.style.display = 'inline-block';
+            logoutBtn.style.display = 'none';
+            usersSection.style.display = 'none';
+            callControls.style.display = 'none';
+            userListEl.innerHTML = '';
+            messagesDiv.innerHTML = '';
+            msgInput.value = '';
+            msgInput.disabled = true;
+            sendBtn.disabled = true;
+            callBtn.disabled = true;
+            videoArea.style.display = 'none';
+            document.title = 'Chat – login';
+        }
+
+        function sendMessage() {
+            if (!selectedUser) return;
+            const message = msgInput.value.trim();
+            if (!message) return;
+            socket.emit('message', {
+                message,
+                toUsername: selectedUser,
+                timestamp: new Date().toISOString()
+            });
+            addChatMessage(`You → ${selectedUser}`, message, true);
+            msgInput.value = '';
+        }
+        sendBtn.onclick = sendMessage;
+        msgInput.addEventListener('keydown', event => {
+            if (event.key === 'Enter') sendMessage();
+        });
+        socket.on('message', payload => addChatMessage(payload.from, payload.message));
+        // Use a custom event name; Socket.IO reserves the event name "error" internally.
+        socket.on('server error', message => {
+            if (typeof message === 'string') addSystemMessage(message);
+        });
+        // Backward compatibility if the current server still emits the old custom event.
+        socket.on('error', message => {
+            if (typeof message === 'string') addSystemMessage(message);
+        });
+
+        async function acquireCamera() {
+            if (cameraStream && cameraStream.getTracks().some(track => track.readyState === 'live')) {
+                return cameraStream;
+            }
+            cameraStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+            localVideo.srcObject = cameraStream;
+            localVideo.play().catch(error => console.warn('Local video play failed:', error));
+            videoArea.style.display = 'flex';
+            return cameraStream;
+        }
+
+        function createPeerConnection(targetSocketId) {
+            const connection = new RTCPeerConnection(configuration);
+            pc = connection;
+            remoteSocketId = targetSocketId;
+            remoteStream = new MediaStream();
+            pendingIceCandidates = [];
+
+            connection.onicecandidate = ({ candidate }) => {
+                if (candidate && pc === connection && remoteSocketId) {
+                    socket.emit('ice-candidate', {
+                        toSocketId: remoteSocketId,
+                        candidate: candidate.toJSON()
+                    });
+                }
+            };
+
+            connection.ontrack = event => {
+                if (!remoteStream.getTracks().some(track => track.id === event.track.id)) {
+                    remoteStream.addTrack(event.track);
+                }
+                remoteVideo.srcObject = remoteStream;
+                videoArea.style.display = 'flex';
+                remoteVideo.play().catch(error => console.warn('Remote media play failed:', error));
+            };
+
+            connection.onconnectionstatechange = () => {
+                console.log('Peer connection state:', connection.connectionState);
+                if (connection.connectionState === 'failed') {
+                    addSystemMessage('Connection failed. A TURN server may be required on this network.');
+                }
+            };
+            return connection;
+        }
+
+        async function startCall() {
+            if (!selectedUser) return alert('Select a user to call first.');
+            if (pc || callSetupInProgress) return;
+            callSetupInProgress = true;
+            callBtn.disabled = true;
+            try {
+                // Request permission before negotiating SDP.
+                await acquireCamera();
+                const targetId = await new Promise(resolve => {
+                    socket.emit('requestOffer', selectedUser, resolve);
+                    // Server should always invoke the callback; Socket.IO has no built-in timeout here.
+                });
+                if (!targetId) throw new Error('User is not online.');
+
+                const connection = createPeerConnection(targetId);
+                for (const track of cameraStream.getTracks()) connection.addTrack(track, cameraStream);
+                const offer = await connection.createOffer();
+                await connection.setLocalDescription(offer);
+                socket.emit('offer', { toSocketId: targetId, sdp: connection.localDescription.sdp });
+                hangupBtn.disabled = false;
+                shareScreenBtn.disabled = false;
+                addSystemMessage(`Calling ${selectedUser}…`);
+            } catch (error) {
+                console.error('Failed to start call:', error);
+                alert('Could not start call: ' + (error?.message || error));
+                closePeerConnection();
+            } finally {
+                callSetupInProgress = false;
+                callBtn.disabled = Boolean(pc) || !selectedUser;
+            }
+        }
+
+        async function handleIncomingOffer({ fromSocketId, sdp }) {
+            if (pc) {
+                console.warn('Already have a peer connection; ignoring incoming offer.');
+                return;
+            }
+            try {
+                const connection = createPeerConnection(fromSocketId);
+                // Apply remote offer first; this creates transceivers for its media sections.
+                await connection.setRemoteDescription({ type: 'offer', sdp });
+                await flushPendingIceCandidates();
+
+                // Reuse the transceivers created from the remote offer. Do not add new
+                // m-lines while answering; an SDP answer must match the offer's m-lines.
+                const stream = await acquireCamera();
+                for (const kind of ['audio', 'video']) {
+                    const track = stream.getTracks().find(item => item.kind === kind);
+                    const transceiver = connection.getTransceivers().find(
+                        item => item.receiver.track.kind === kind
+                    );
+                    if (transceiver) {
+                        await transceiver.sender.replaceTrack(track || null);
+                        if (transceiver.direction === 'recvonly' || transceiver.direction === 'inactive') {
+                            transceiver.direction = 'sendrecv';
+                        }
+                    } else {
+                        console.warn(`Offer has no ${kind} transceiver; cannot send that media in this call.`);
+                    }
+                }
+
+                const answer = await connection.createAnswer();
+                await connection.setLocalDescription(answer);
+                socket.emit('answer', { toSocketId: fromSocketId, sdp: connection.localDescription.sdp });
+                hangupBtn.disabled = false;
+                shareScreenBtn.disabled = false;
+                callBtn.disabled = true;
+                addSystemMessage('Incoming call connected.');
+            } catch (error) {
+                console.error('Failed to answer call:', error);
+                alert('Could not answer call: ' + (error?.message || error));
+                closePeerConnection();
+            }
+        }
+
+        async function handleIncomingAnswer({ fromSocketId, sdp }) {
+            if (!pc || (fromSocketId && fromSocketId !== remoteSocketId)) return;
+            try {
+                await pc.setRemoteDescription({ type: 'answer', sdp });
+                await flushPendingIceCandidates();
+                console.log('Remote answer applied');
+            } catch (error) {
+                console.error('Failed to apply answer:', error);
+            }
+        }
+
+        async function handleIncomingIce({ fromSocketId, candidate }) {
+            if (!pc || !candidate || (fromSocketId && fromSocketId !== remoteSocketId)) return;
+            if (!pc.remoteDescription) {
+                pendingIceCandidates.push(candidate);
+                return;
+            }
+            try {
+                await pc.addIceCandidate(candidate);
+            } catch (error) {
+                console.warn('ICE add error:', error);
+            }
+        }
+
+        async function flushPendingIceCandidates() {
+            if (!pc || !pc.remoteDescription) return;
+            while (pendingIceCandidates.length) {
+                const candidate = pendingIceCandidates.shift();
+                try {
+                    await pc.addIceCandidate(candidate);
+                } catch (error) {
+                    console.warn('Queued ICE candidate error:', error);
+                }
+            }
+        }
+
+        async function shareScreen() {
+            if (!pc || pc.connectionState === 'closed') {
+                alert('Start a call before sharing your screen.');
+                return;
+            }
+            if (!navigator.mediaDevices?.getDisplayMedia) {
+                alert('Screen sharing is not supported in this browser/context. Use HTTPS or localhost.');
+                return;
+            }
+            try {
+                const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+                const screenTrack = stream.getVideoTracks()[0];
+                if (!screenTrack) throw new Error('No screen video track was returned.');
+                const sender = pc.getSenders().find(item => item.track?.kind === 'video')
+                    || pc.getTransceivers().find(item => item.receiver.track.kind === 'video')?.sender;
+                if (!sender) {
+                    stream.getTracks().forEach(track => track.stop());
+                    throw new Error('No negotiated video sender. Start a new call and try again.');
+                }
+                screenStream = stream;
+                await sender.replaceTrack(screenTrack);
+                localVideo.srcObject = screenStream;
+                screenTrack.onended = () => stopScreenShare();
+                shareScreenBtn.disabled = true;
+                stopShareBtn.disabled = false;
+                stopShareBtn.style.display = 'inline-block';
+            } catch (error) {
+                if (error?.name !== 'NotAllowedError') console.error('Screen share failed:', error);
+                if (error?.name !== 'NotAllowedError') alert('Could not share screen: ' + (error?.message || error));
+            }
+        }
+
+        async function stopScreenShare() {
+            if (!screenStream) return;
+            const stream = screenStream;
+            screenStream = null;
+            const screenTrack = stream.getVideoTracks()[0];
+            if (screenTrack) screenTrack.onended = null;
+            try {
+                const sender = pc?.getSenders().find(item => item.track === screenTrack)
+                    || pc?.getTransceivers().find(item => item.receiver.track.kind === 'video')?.sender;
+                const cameraTrack = cameraStream?.getVideoTracks()[0] || null;
+                if (sender && pc?.connectionState !== 'closed') await sender.replaceTrack(cameraTrack);
+            } catch (error) {
+                console.warn('Could not restore camera track:', error);
+            }
+            stream.getTracks().forEach(track => track.stop());
+            localVideo.srcObject = cameraStream;
+            shareScreenBtn.disabled = !pc;
+            stopShareBtn.disabled = true;
+            stopShareBtn.style.display = 'none';
+        }
+
+        function closePeerConnection() {
+            const oldPc = pc;
+            pc = null;
+            remoteSocketId = null;
+            pendingIceCandidates = [];
+            if (oldPc) {
+                oldPc.onicecandidate = null;
+                oldPc.ontrack = null;
+                oldPc.onconnectionstatechange = null;
+                oldPc.close();
+            }
+            if (screenStream) {
+                screenStream.getTracks().forEach(track => track.stop());
+                screenStream = null;
+            }
+            if (cameraStream) {
+                cameraStream.getTracks().forEach(track => track.stop());
+                cameraStream = null;
+            }
+            localVideo.srcObject = null;
+            remoteVideo.srcObject = null;
+            remoteStream = null;
+            videoArea.style.display = 'none';
+            hangupBtn.disabled = true;
+            shareScreenBtn.disabled = true;
+            stopShareBtn.disabled = true;
+            stopShareBtn.style.display = 'none';
+            callBtn.disabled = !selectedUser;
+        }
+
+        function hangUp(notifyPeer = true) {
+            const targetId = remoteSocketId;
+            if (notifyPeer && targetId) socket.emit('hangup', { toSocketId: targetId });
+            closePeerConnection();
+            addSystemMessage('Call ended.');
+        }
+
+        socket.on('offer', handleIncomingOffer);
+        socket.on('answer', handleIncomingAnswer);
+        socket.on('ice-candidate', handleIncomingIce);
+        socket.on('hangup', ({ fromSocketId } = {}) => {
+            if (pc && (!fromSocketId || fromSocketId === remoteSocketId)) {
+                closePeerConnection();
+                addSystemMessage('The other user ended the call.');
+            }
+        });
+
+        shareScreenBtn.onclick = shareScreen;
+        stopShareBtn.onclick = stopScreenShare;
+        callBtn.onclick = startCall;
+        hangupBtn.onclick = () => hangUp(true);
+
+        window.addEventListener('beforeunload', () => {
+            if (remoteSocketId) socket.emit('hangup', { toSocketId: remoteSocketId });
+            closePeerConnection();
+            socket.disconnect();
+        });
+    </script>
+</body>
+
+</html>
