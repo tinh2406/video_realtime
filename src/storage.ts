@@ -4,7 +4,7 @@ const STORAGE_KEY_HISTORY = 'meet_room_history_v1'
 const STORAGE_KEY_PROFILE = 'meet_user_profile_v1'
 
 const DEFAULT_PROFILE: UserProfile = {
-  name: 'Minh Anh',
+  name: '',
   avatarColor: 'blue',
   statusText: 'Sẵn sàng kết nối',
 }

@@ -2,6 +2,28 @@ export type RoomMode = 'call' | 'group' | 'live'
 
 export type RoomRole = 'host' | 'viewer'
 
+export type AppView = 'dashboard' | 'lobby' | 'call'
+
+export interface ActiveRoomInfo {
+  id: string
+  name: string
+  mode: RoomMode
+  role: RoomRole
+}
+
+export interface LiveStreamItem {
+  id: string
+  title: string
+  streamerName: string
+  streamerAvatar?: string
+  viewersCount: number
+  tag?: string
+  isLive: boolean
+  description?: string
+}
+
+
+
 export interface RoomHistoryItem {
   id: string
   name: string

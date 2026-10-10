@@ -37,6 +37,7 @@ export function useRoom(
   mode: RoomMode,
   displayName: string,
   localStream: MediaStream | null,
+  roomTitle?: string,
 ) {
   const [participants, setParticipants] = useState<RoomParticipant[]>([])
   const [connectionState, setConnectionState] = useState('Đang kết nối')
@@ -324,6 +325,7 @@ export function useRoom(
         peerId: localPeerId.current,
         name: displayName,
         mode,
+        title: roomTitle,
       }))
     }
 

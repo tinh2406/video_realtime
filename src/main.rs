@@ -11,6 +11,7 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 #[derive(Clone, Default)]
 struct AppState {
     rooms: Arc<Mutex<HashMap<String, HashMap<String, Peer>>>>,
+    room_titles: Arc<Mutex<HashMap<String, String>>>,
 }
 
 #[derive(Clone)]
@@ -18,6 +19,37 @@ struct Peer {
     sender: UnboundedSender<String>,
     name: String,
     mode: String,
+}
+
+#[get("/api/live-streams")]
+async fn list_live_streams(state: web::Data<AppState>) -> HttpResponse {
+    let mut streams = Vec::new();
+    if let Ok(rooms) = state.rooms.lock() {
+        let titles = state.room_titles.lock().ok();
+        for (room_id, peers) in rooms.iter() {
+            let is_live = peers.values().any(|p| p.mode == "live");
+            if is_live {
+                let streamer_name = peers
+                    .values()
+                    .next()
+                    .map(|p| p.name.clone())
+                    .unwrap_or_else(|| "Streamer".to_string());
+                let title = titles
+                    .as_ref()
+                    .and_then(|t| t.get(room_id).cloned())
+                    .unwrap_or_else(|| format!("Livestream của {}", streamer_name));
+                streams.push(json!({
+                    "id": room_id,
+                    "title": title,
+                    "streamerName": streamer_name,
+                    "viewersCount": peers.len(),
+                    "tag": "WebRTC Live",
+                    "isLive": true
+                }));
+            }
+        }
+    }
+    HttpResponse::Ok().json(streams)
 }
 
 #[get("/video/{filename:.*}")]
@@ -65,6 +97,9 @@ fn remove_peer(state: &AppState, room: &str, peer_id: &str) {
         if let Ok(mut rooms) = state.rooms.lock() {
             rooms.remove(room);
         }
+        if let Ok(mut titles) = state.room_titles.lock() {
+            titles.remove(room);
+        }
     }
     send_room_event(state, room, peer_id, json!({ "type": "peer-left", "peerId": peer_id }));
 }
@@ -107,6 +142,12 @@ fn handle_client_message(
                 .filter(|mode| ["call", "group", "live"].contains(mode))
                 .unwrap_or("group")
                 .to_string();
+
+            if let Some(t) = value.get("title").and_then(Value::as_str) {
+                if let Ok(mut titles) = state.room_titles.lock() {
+                    titles.insert(room.to_string(), t.to_string());
+                }
+            }
 
             if let Ok(mut rooms) = state.rooms.lock() {
                 let peers = rooms.entry(room.to_string()).or_default();
@@ -247,6 +288,7 @@ async fn main() -> std::io::Result<()> {
         App::new()
             .app_data(state.clone())
             .service(video)
+            .service(list_live_streams)
             .route("/ws", web::get().to(websocket))
             .service(Files::new("/", "./dist").index_file("index.html"))
     })
