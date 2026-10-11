@@ -177,9 +177,9 @@ export function CallView({
             <>
               {/* Main Full View Tile */}
               {isSwapped ? (
-                localStream && room.role === 'host' && (
+                (localStream || screenStream) && room.role === 'host' && (
                   <VideoSurface
-                    stream={cameraOn ? screenStream ?? localStream : null}
+                    stream={screenStream ?? (cameraOn ? localStream : null)}
                     muted
                     label={`${profile.name} (Bạn)`}
                     isSpeaking={localIsSpeaking}
@@ -192,7 +192,7 @@ export function CallView({
               ) : (
                 participants[0] && (
                   <VideoSurface
-                    stream={participants[0].stream}
+                    stream={participants[0].screenStream ?? participants[0].stream}
                     label={participants[0].name}
                     isSpeaking={peerStatuses[participants[0].id]?.isSpeaking}
                     isMuted={peerStatuses[participants[0].id]?.isMuted}
@@ -222,14 +222,14 @@ export function CallView({
                   </div>
                 )
               ) : (
-                localStream && room.role === 'host' && (
+                (localStream || screenStream) && room.role === 'host' && (
                   <div
                     className="pip-corner-wrapper"
                     onClick={() => setIsSwapped(true)}
                     title="Bấm để đổi màn hình chính"
                   >
                     <VideoSurface
-                      stream={cameraOn ? screenStream ?? localStream : null}
+                      stream={cameraOn ? localStream : null}
                       muted
                       label={`${profile.name} (Bạn)`}
                       isSpeaking={localIsSpeaking}
@@ -265,30 +265,33 @@ export function CallView({
             </>
           ) : (
             <>
-              {localStream && room.role === 'host' && (
-                <VideoSurface
-                  stream={cameraOn ? screenStream ?? localStream : null}
-                  muted
-                  label={`${profile.name} (Bạn)`}
-                  isSpeaking={localIsSpeaking}
-                  isMuted={isMuted}
-                  handRaised={localHandRaised}
-                  avatarColor={profile.avatarColor}
-                  className="self-tile"
-                />
+              {(localStream || screenStream) && room.role === 'host' && (
+                <div className={screenStream ? 'local-share-group' : undefined}>
+                  <VideoSurface
+                    stream={cameraOn ? localStream : null}
+                    muted
+                    label={screenStream ? 'Màn hình đang chia sẻ' : `${profile.name} (Bạn)`}
+                    isSpeaking={localIsSpeaking}
+                    isMuted={isMuted}
+                    handRaised={localHandRaised}
+                    avatarColor={profile.avatarColor}
+                    className={screenStream ? 'shared-screen-tile' : 'self-tile'}
+                  />
+                  {screenStream && cameraOn && localStream && (
+                    <VideoSurface stream={localStream} muted label={`${profile.name} · Camera`} className="screen-camera-pip" />
+                  )}
+                </div>
               )}
 
               {participants.map((p) => {
                 const status = peerStatuses[p.id]
                 return (
-                  <VideoSurface
-                    key={p.id}
-                    stream={p.stream}
-                    label={p.name}
-                    isSpeaking={status?.isSpeaking}
-                    isMuted={status?.isMuted}
-                    handRaised={status?.handRaised}
-                  />
+                  <div key={p.id} className={p.screenStream ? 'participant-share-group' : undefined}>
+                    {p.screenStream && <VideoSurface stream={p.screenStream} label={`${p.name} · Đang chia sẻ màn hình`} className="shared-screen-tile" />}
+                    {p.screenStream
+                      ? <VideoSurface stream={p.stream} label={`${p.name} · Camera`} isSpeaking={status?.isSpeaking} isMuted={status?.isMuted} handRaised={status?.handRaised} className="screen-camera-pip" />
+                      : <VideoSurface stream={p.stream} label={p.name} isSpeaking={status?.isSpeaking} isMuted={status?.isMuted} handRaised={status?.handRaised} />}
+                  </div>
                 )
               })}
             </>

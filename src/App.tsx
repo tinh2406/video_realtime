@@ -116,6 +116,7 @@ export function App() {
     participants,
     connectionState,
     roomError,
+    roomEnded,
     leaveRoom,
     screenStream,
     shareScreen,
@@ -130,7 +131,7 @@ export function App() {
     toggleHandRaise,
     broadcastLocalStatus,
     replaceTrack,
-  } = useRoom(roomConnectId, roomConnectMode, profile.name, localStream, activeRoom?.name)
+  } = useRoom(roomConnectId, roomConnectMode, activeRoom?.role ?? 'viewer', profile.name, localStream, activeRoom?.name)
 
   // Mic test volume meter during active call
   useEffect(() => {
@@ -269,6 +270,18 @@ export function App() {
     setCurrentView('dashboard')
     window.history.pushState({ view: 'dashboard' }, '', window.location.pathname)
   }
+
+  useEffect(() => {
+    if (!roomEnded || currentView !== 'call' || activeRoom?.role !== 'viewer') return
+    leaveRoom()
+    localStream?.getTracks().forEach((track) => track.stop())
+    screenStream?.getTracks().forEach((track) => track.stop())
+    setLocalStream(null)
+    setActiveRoom(null)
+    setCurrentView('dashboard')
+    setNotice('Livestream đã kết thúc.')
+    window.history.pushState({ view: 'dashboard' }, '', window.location.pathname)
+  }, [roomEnded, currentView, activeRoom?.role, leaveRoom, localStream, screenStream])
 
   // Return to Dashboard from Lobby
   const handleBackToDashboard = () => {

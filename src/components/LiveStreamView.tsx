@@ -21,7 +21,7 @@ import {
 } from 'lucide-react'
 import type { ActiveRoomInfo, ChatMessage, FloatingReaction, PeerStatus, RoomMode, UserProfile } from '../types'
 import type { RoomParticipant } from '../useRoom'
-import { initials } from './VideoSurface'
+import { initials, VideoSurface } from './VideoSurface'
 
 const STREAM_EMOJIS = ['❤️', '🔥', '👏', '🎉', '🌟', '🙌', '💯', '😂']
 
@@ -115,7 +115,13 @@ export function LiveStreamView({
   useEffect(() => {
     if (!isHost && viewerVideoRef.current) {
       if (streamerParticipant?.stream) {
-        viewerVideoRef.current.srcObject = streamerParticipant.stream
+        const presentationStream = streamerParticipant.screenStream
+          ? new MediaStream([
+              ...streamerParticipant.screenStream.getVideoTracks(),
+              ...streamerParticipant.stream.getAudioTracks(),
+            ])
+          : streamerParticipant.stream
+        viewerVideoRef.current.srcObject = presentationStream
         viewerVideoRef.current.volume = viewerMuted ? 0 : viewerVolume
       } else {
         viewerVideoRef.current.srcObject = null
@@ -221,7 +227,7 @@ export function LiveStreamView({
             {isHost ? (
               /* HOST / STREAMER STUDIO VIEW */
               <div className="stream-canvas">
-                {cameraOn && (localStream || screenStream) ? (
+                {(screenStream || (cameraOn && localStream)) ? (
                   <video ref={hostVideoRef} autoPlay playsInline muted />
                 ) : (
                   <div className="stream-placeholder">
@@ -239,6 +245,9 @@ export function LiveStreamView({
                     <Radio size={13} /> ĐANG LIVE TỚI KHÁN GIẢ
                   </span>
                   {screenStream && <span className="screen-pill">Đang chia sẻ màn hình</span>}
+                  {screenStream && cameraOn && localStream && (
+                    <VideoSurface stream={localStream} muted label={`${profile.name} · Camera`} className="screen-camera-pip" />
+                  )}
                 </div>
 
                 {/* Streamer Studio Toolbar */}
@@ -295,12 +304,12 @@ export function LiveStreamView({
               /* VIEWER / AUDIENCE THEATER PLAYER */
               <div className="stream-canvas viewer-cinema-canvas">
                 {streamerParticipant ? (
-                  <video
-                    ref={viewerVideoRef}
-                    autoPlay
-                    playsInline
-                    muted={viewerMuted}
-                  />
+                  <>
+                    <video ref={viewerVideoRef} autoPlay playsInline muted={viewerMuted} />
+                    {streamerParticipant.screenStream && (
+                      <VideoSurface stream={streamerParticipant.stream} label={`${streamerParticipant.name} · Camera`} className="screen-camera-pip" />
+                    )}
+                  </>
                 ) : (
                   <div className="stream-placeholder">
                     <div className="live-waiting-orbit">

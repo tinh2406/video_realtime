@@ -63,4 +63,7 @@ export interface PeerStatus {
   isSpeaking: boolean
   handRaised: boolean
   screenSharing: boolean
+  screenStreamId?: string | null
+  screenMid?: string | null
+  screenMids?: Record<string, string>
 }

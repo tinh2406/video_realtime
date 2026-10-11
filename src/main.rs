@@ -19,6 +19,7 @@ struct Peer {
     sender: UnboundedSender<String>,
     name: String,
     mode: String,
+    role: String,
 }
 
 #[get("/api/live-streams")]
@@ -27,11 +28,11 @@ async fn list_live_streams(state: web::Data<AppState>) -> HttpResponse {
     if let Ok(rooms) = state.rooms.lock() {
         let titles = state.room_titles.lock().ok();
         for (room_id, peers) in rooms.iter() {
-            let is_live = peers.values().any(|p| p.mode == "live");
+            let is_live = peers.values().any(|p| p.mode == "live" && p.role == "host");
             if is_live {
                 let streamer_name = peers
                     .values()
-                    .next()
+                    .find(|p| p.mode == "live" && p.role == "host")
                     .map(|p| p.name.clone())
                     .unwrap_or_else(|| "Streamer".to_string());
                 let title = titles
@@ -82,10 +83,19 @@ fn send_room_event(state: &AppState, room: &str, except_peer: &str, event: Value
 }
 
 fn remove_peer(state: &AppState, room: &str, peer_id: &str) {
+    let mut ended_live_senders = Vec::new();
     let should_remove_room = if let Ok(mut rooms) = state.rooms.lock() {
         if let Some(peers) = rooms.get_mut(room) {
-            peers.remove(peer_id);
-            peers.is_empty()
+            let removed = peers.remove(peer_id);
+            let host_ended_live = removed
+                .as_ref()
+                .is_some_and(|peer| peer.mode == "live" && peer.role == "host");
+            if host_ended_live {
+                ended_live_senders.extend(peers.values().map(|peer| peer.sender.clone()));
+                true
+            } else {
+                peers.is_empty()
+            }
         } else {
             false
         }
@@ -100,6 +110,9 @@ fn remove_peer(state: &AppState, room: &str, peer_id: &str) {
         if let Ok(mut titles) = state.room_titles.lock() {
             titles.remove(room);
         }
+    }
+    for sender in ended_live_senders {
+        let _ = sender.send(json!({ "type": "room-ended", "reason": "host-left" }).to_string());
     }
     send_room_event(state, room, peer_id, json!({ "type": "peer-left", "peerId": peer_id }));
 }
@@ -142,6 +155,12 @@ fn handle_client_message(
                 .filter(|mode| ["call", "group", "live"].contains(mode))
                 .unwrap_or("group")
                 .to_string();
+            let role = value
+                .get("role")
+                .and_then(Value::as_str)
+                .filter(|role| ["host", "viewer"].contains(role))
+                .unwrap_or("viewer")
+                .to_string();
 
             if let Some(t) = value.get("title").and_then(Value::as_str) {
                 if let Ok(mut titles) = state.room_titles.lock() {
@@ -165,6 +184,7 @@ fn handle_client_message(
                         sender: outgoing.clone(),
                         name: name.clone(),
                         mode,
+                        role,
                     },
                 );
             }
@@ -210,6 +230,20 @@ fn handle_client_message(
                     );
                 }
             }
+        }
+        Some("status") => {
+            let Some((room, own_peer_id)) = joined.as_ref() else {
+                return;
+            };
+            let Some(status) = value.get("status") else {
+                return;
+            };
+            send_room_event(
+                state,
+                room,
+                own_peer_id,
+                json!({ "type": "status", "peerId": own_peer_id, "status": status }),
+            );
         }
         Some("leave") => {
             if let Some((room, peer_id)) = joined.take() {
