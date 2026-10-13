@@ -314,10 +314,38 @@ async fn websocket(
     Ok(response)
 }
 
+async fn run_turn_server() {
+    println!("🚀 Đang khởi động TURN/STUN Server trên cổng 3478...");
+    // Đọc cấu hình từ file turn-server.toml nếu có
+    let config_path = "turn-server.toml";
+    if let Ok(content) = std::fs::read_to_string(config_path) {
+        match toml::from_str::<turn_server::config::Config>(&content) {
+            Ok(config) => {
+                if let Err(err) = turn_server::start_server(config).await {
+                    eprintln!("❌ Lỗi TURN Server: {}", err);
+                }
+            }
+            Err(err) => {
+                eprintln!("❌ Không thể parse {}: {}", config_path, err);
+            }
+        }
+    } else {
+        eprintln!("⚠️ Không tìm thấy file {}, vui lòng tạo file cấu hình.", config_path);
+    }
+}
+
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     std::fs::create_dir_all("videos")?;
+
+    // Khởi chạy TURN Server trong background task
+    tokio::spawn(async {
+        run_turn_server().await;
+    });
+
     let state = web::Data::new(AppState::default());
+    println!("🌐 HTTP Server & WebSocket đang chạy tại http://127.0.0.1:8080");
+
     HttpServer::new(move || {
         App::new()
             .app_data(state.clone())

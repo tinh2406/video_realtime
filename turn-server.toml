@@ -1,0 +1,37 @@
+# ==============================================================================
+# Cấu hình TURN / STUN Server (chạy tích hợp trực tiếp từ src/main.rs)
+# ==============================================================================
+
+[server]
+# Realm định danh cho server (chuỗi bất kỳ hoặc domain)
+realm = "webrtc.local"
+
+# Dải port UDP cấp phát để chuyển tiếp gói tin (Relay media)
+port-range = "50000..50100"
+
+# Số lượng worker thread tối đa
+max-threads = 4
+
+# ------------------------------------------------------------------------------
+# Lắng nghe giao thức UDP (Cổng mặc định STUN/TURN: 3478)
+# ------------------------------------------------------------------------------
+[[server.interfaces]]
+transport = "udp"
+listen = "0.0.0.0:3478"
+# Thay bằng IP Public (khi deploy VPS) hoặc IP LAN của máy bạn (khi test cùng mạng Wi-Fi)
+# Ví dụ: external = "192.168.1.15:3478"
+external = "127.0.0.1:3478"
+
+# ------------------------------------------------------------------------------
+# Lắng nghe giao thức TCP (Dùng khi mạng chặn hoàn toàn UDP)
+# ------------------------------------------------------------------------------
+[[server.interfaces]]
+transport = "tcp"
+listen = "0.0.0.0:3478"
+external = "127.0.0.1:3478"
+
+# ------------------------------------------------------------------------------
+# Tài khoản xác thực (Long-term Credential)
+# ------------------------------------------------------------------------------
+[auth.static-credentials]
+"user" = "password123"

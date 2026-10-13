@@ -32,6 +32,14 @@ const ICE_SERVERS: RTCConfiguration = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
+    {
+      urls: [
+        `turn:${typeof window !== 'undefined' ? window.location.hostname : '127.0.0.1'}:3478?transport=udp`,
+        `turn:${typeof window !== 'undefined' ? window.location.hostname : '127.0.0.1'}:3478?transport=tcp`,
+      ],
+      username: 'user',
+      credential: 'password123',
+    },
   ],
 }
 
